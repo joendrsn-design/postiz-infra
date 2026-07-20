@@ -122,8 +122,17 @@ rclone credentials live in `~/.config/rclone/rclone.conf` (not in this repo).
 
 ### Restore procedure
 
-**This procedure has never been exercised against this stack.** Test it against a
-throwaway database before relying on it in an incident.
+**Verified 2026-07-20** against a scratch database and scratch volumes, without
+touching live data. What was confirmed: the dump restores with zero errors into an
+empty database and reproduces all 69 tables, 220 indexes, and 124 constraints
+identically, with row content byte-for-byte identical (including the user's
+password hash, so logins survive a restore). The uploads tar/untar round-trip was
+verified separately with nested directories, binary files, and dotfiles.
+
+> **`ON_ERROR_STOP=1` is not optional.** `psql` exits **0 even when the restore
+> fails**. Restoring onto a non-empty database produced 362 errors and changed
+> nothing, yet still reported success. Always pass `-v ON_ERROR_STOP=1` and check
+> the exit code, or you will believe a failed restore worked.
 
 List available backups:
 
@@ -140,15 +149,18 @@ docker compose stop postiz
 
 rclone copy r2:postiz-backups/db/postiz-db-<stamp>.sql.gz /tmp/
 gunzip -c /tmp/postiz-db-<stamp>.sql.gz | \
-  docker exec -i postiz-postgres psql -U postiz-user -d postiz-db-local
+  docker exec -i postiz-postgres psql -U postiz-user -d postiz-db-local -v ON_ERROR_STOP=1
+echo "restore exit: $?"   # must be 0 — see the warning above
 
 docker compose start postiz
 docker compose logs -f postiz
 ```
 
-The dump is a plain `pg_dump` (no `--clean`), so it restores into an *existing*
-database and will conflict with existing rows. To restore onto a dirty database,
-recreate it empty first — note this destroys current contents, so be certain:
+The dump is a plain `pg_dump` (no `--clean`), so it only restores cleanly into an
+**empty** database. Against a populated one every object and row conflicts, the
+restore is a no-op, and without `ON_ERROR_STOP=1` it still exits 0. In a real
+recovery the database will usually already exist, so recreate it empty first —
+this destroys current contents, so be certain:
 
 ```bash
 docker exec -i postiz-postgres psql -U postiz-user -d postgres \
@@ -218,3 +230,26 @@ The server authenticates to GitHub with a dedicated ed25519 **deploy key** at
 `~/.ssh/github_deploy`, selected for `github.com` via `~/.ssh/config`. The public
 key must be registered under this repo's *Settings -> Deploy keys*, with write
 access enabled if the server should push.
+
+### Re-testing the restore
+
+Non-disruptive — uses a scratch database, never touches `postiz-db-local`:
+
+```bash
+rclone copy r2:postiz-backups/db/postiz-db-<stamp>.sql.gz /tmp/
+docker exec postiz-postgres psql -U postiz-user -d postgres \
+  -c 'CREATE DATABASE "postiz-restore-test" OWNER "postiz-user";'
+gunzip -c /tmp/postiz-db-<stamp>.sql.gz | \
+  docker exec -i postiz-postgres psql -U postiz-user -d postiz-restore-test -v ON_ERROR_STOP=1
+echo "exit: $?"   # must be 0
+
+# compare against live
+docker exec postiz-postgres psql -U postiz-user -d postiz-restore-test -tAc \
+  "select count(*) from information_schema.tables where table_schema='public';"   # expect 69
+
+docker exec postiz-postgres psql -U postiz-user -d postgres \
+  -c 'DROP DATABASE "postiz-restore-test";'
+```
+
+Worth re-running after any Postiz major-version upgrade, since migrations change
+the schema.
