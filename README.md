@@ -120,6 +120,21 @@ even on failure):
 
 rclone credentials live in `~/.config/rclone/rclone.conf` (not in this repo).
 
+**Cron-safety.** `docker` and `rclone` are invoked by absolute path, and the rclone
+config path is passed explicitly rather than resolved via `$HOME` — the usual
+reason an rclone job works by hand but fails under cron. All three are overridable
+by environment variable (`DOCKER`, `RCLONE`, `RCLONE_CONFIG`) for testing. A
+preflight check verifies both binaries, the config file, the `r2` remote and
+docker daemon reachability, and aborts with a specific message before doing any
+work. Verified by running under an empty environment:
+
+```bash
+env -i PATH=/usr/bin:/bin /opt/postiz/backup.sh
+```
+
+If the host user ever changes, update `RCLONE_CONFIG`'s default in `backup.sh` —
+it is hardcoded to `/home/joe/...` precisely so it does not depend on `$HOME`.
+
 **Every artifact is verified before upload.** SQL dumps are checked for gzip
 integrity *and* for pg_dump's `-- PostgreSQL database dump complete` marker;
 archives are checked for gzip integrity and tar readability. The marker check is
