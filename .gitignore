@@ -1,0 +1,10 @@
+# Upstream reference clone (gitroomhq/postiz-docker-compose) — has its own .git,
+# not part of this deployment's config. See README.
+postiz-docker-compose/
+
+# Secrets, once extracted out of docker-compose.yaml
+.env
+
+# Backup temp artifacts
+*.sql.gz
+*.tar.gz
