@@ -107,27 +107,47 @@ docker compose up -d postiz
 15 9 * * * /opt/postiz/backup.sh >> /var/log/postiz-backup.log 2>&1
 ```
 
-Each run dumps `postiz-db-local`, tars the `postiz_postiz-uploads` volume, uploads
-both to Cloudflare R2 via the rclone remote `r2`, removes the local temp files,
-then prunes both remote prefixes to **30 days**.
+Each run produces four artifacts under `r2:postiz-backups/`, prunes each prefix to
+**30 days**, and cleans up its temp files (via an `EXIT` trap, so they are removed
+even on failure):
 
-Destinations: `r2:postiz-backups/db/` and `r2:postiz-backups/uploads/`.
+| Prefix | Source | Contents |
+| --- | --- | --- |
+| `db/` | `postiz-db-local` | Postiz application data |
+| `temporal-db/` | `temporal` | Temporal workflow history — **scheduled posts** |
+| `uploads/` | `postiz_postiz-uploads` | user-uploaded media |
+| `config/` | `postiz_postiz-config` | Postiz config volume |
+
 rclone credentials live in `~/.config/rclone/rclone.conf` (not in this repo).
+
+**Every artifact is verified before upload.** SQL dumps are checked for gzip
+integrity *and* for pg_dump's `-- PostgreSQL database dump complete` marker;
+archives are checked for gzip integrity and tar readability. The marker check is
+not redundant — a truncated dump is still *valid gzip*, so an integrity check
+alone would happily ship a partial backup. The script exits non-zero on any
+failure, so a broken run is visible in the log rather than silent.
 
 ### What is NOT backed up
 
-- The `postiz_postiz-config` volume.
-- `temporal-postgres-data` — Temporal's workflow history, i.e. **scheduled posts**.
-  Restoring only the Postiz DB will not bring back in-flight schedules.
+- `temporal-elasticsearch-data` — Temporal's **visibility index**. This is derived
+  data used for searching and listing workflows; the authoritative workflow history
+  is in the `temporal` Postgres DB, which *is* backed up. Losing it does not lose
+  scheduled posts, but the Temporal UI's list view will be incomplete until the
+  index is rebuilt.
 
 ### Restore procedure
 
-**Verified 2026-07-20** against a scratch database and scratch volumes, without
-touching live data. What was confirmed: the dump restores with zero errors into an
-empty database and reproduces all 69 tables, 220 indexes, and 124 constraints
-identically, with row content byte-for-byte identical (including the user's
-password hash, so logins survive a restore). The uploads tar/untar round-trip was
-verified separately with nested directories, binary files, and dotfiles.
+**Verified 2026-07-20** against scratch databases and scratch volumes, without
+touching live data:
+
+- **Postiz DB** — restores with zero errors into an empty database, reproducing all
+  69 tables, 220 indexes and 124 constraints identically, with row content
+  byte-for-byte identical (including the user's password hash, so logins survive).
+- **Temporal DB** — restores with zero errors, reproducing 37 tables and 44 indexes,
+  with matching row counts across `executions`, `history_node`, `namespaces` and
+  `task_queues`, and both namespaces (`default`, `temporal-system`) intact.
+- **Uploads** — tar/untar round-trip verified byte-identical with nested
+  directories, binary files and dotfiles.
 
 > **`ON_ERROR_STOP=1` is not optional.** `psql` exits **0 even when the restore
 > fails**. Restoring onto a non-empty database produced 362 errors and changed
@@ -168,19 +188,42 @@ docker exec -i postiz-postgres psql -U postiz-user -d postgres \
   -c 'CREATE DATABASE "postiz-db-local" OWNER "postiz-user";'
 ```
 
-**Uploads.** Restore into the volume via a throwaway container:
+**Temporal database.** Restores scheduled posts. Stop Temporal first so it is not
+writing, and recreate the database empty for the same reason as above:
+
+```bash
+docker compose stop temporal temporal-ui
+docker exec temporal-postgresql psql -U temporal -d postgres \
+  -c 'DROP DATABASE temporal;' -c 'CREATE DATABASE temporal OWNER temporal;'
+
+rclone copy r2:postiz-backups/temporal-db/temporal-db-<stamp>.sql.gz /tmp/
+gunzip -c /tmp/temporal-db-<stamp>.sql.gz | \
+  docker exec -i temporal-postgresql psql -U temporal -d temporal -v ON_ERROR_STOP=1
+echo "restore exit: $?"   # must be 0
+
+docker compose start temporal temporal-ui
+```
+
+The Elasticsearch visibility index is not restored with this — workflows will run
+correctly, but the Temporal UI list view may be incomplete until reindexed.
+
+**Uploads and config.** Restore into the volumes via a throwaway container:
 
 ```bash
 rclone copy r2:postiz-backups/uploads/postiz-uploads-<stamp>.tar.gz /tmp/
 docker run --rm -i -v postiz_postiz-uploads:/uploads alpine \
   tar xzf - -C /uploads < /tmp/postiz-uploads-<stamp>.tar.gz
+
+rclone copy r2:postiz-backups/config/postiz-config-<stamp>.tar.gz /tmp/
+docker run --rm -i -v postiz_postiz-config:/config alpine \
+  tar xzf - -C /config < /tmp/postiz-config-<stamp>.tar.gz
 ```
 
-**Full host rebuild.** Install Docker, Caddy, and rclone; clone this repo to
-`/opt/postiz`; restore `~/.config/rclone/rclone.conf`; `docker compose up -d`;
-then run the two restores above. Copy `Caddyfile` to `/etc/caddy/` and reload.
-Reinstate the cron line. Temporal rebuilds its own schema on first start, but
-prior workflow history is not recoverable.
+**Full host rebuild.** Install Docker, Caddy and rclone; clone this repo to
+`/opt/postiz`; recreate `.env` from `.env.example`; restore
+`~/.config/rclone/rclone.conf`; `docker compose up -d`; then run the restores
+above (Postiz DB, Temporal DB, uploads, config). Copy `Caddyfile` to `/etc/caddy/`
+and reload. Reinstate the cron line from [Backups](#backups).
 
 ## Secrets
 
