@@ -118,7 +118,12 @@ services:
       - postiz-network
       - temporal-network
     healthcheck:
-      test: ["CMD", "node", "-e", "const r=require('http').get('http://localhost:5000/',res=>process.exit(res.statusCode<500?0:1));r.on('error',()=>process.exit(1));r.setTimeout(4000,()=>{r.destroy();process.exit(1)})"]
+      # Probe BOTH the frontend (5000) and the backend API (3000). The backend
+      # can lose a cold-start race and hang before opening 3000 while the
+      # frontend serves fine; a frontend-only check reports "healthy" while every
+      # /api call 502s and pages render blank. Requiring 3000 too makes that
+      # visible as "unhealthy". Fix a hung backend with: pm2 restart backend.
+      test: ["CMD", "node", "-e", "const h=require('http');const chk=p=>new Promise(r=>{const q=h.get({host:'localhost',port:p,timeout:4000},x=>{x.resume();r(x.statusCode<500)});q.on('error',()=>r(false));q.on('timeout',()=>{q.destroy();r(false)})});Promise.all([chk(5000),chk(3000)]).then(v=>process.exit(v.every(Boolean)?0:1))"]
       interval: 30s
       timeout: 10s
       retries: 5
