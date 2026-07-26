@@ -1,3 +1,16 @@
 postiz.dailylatin.org {
-    reverse_proxy localhost:4007
+    # Static privacy policy, served ahead of the app so it isn't swallowed
+    # by Postiz's catch-all redirect to /auth. Used as the OAuth privacy URL
+    # for connected social apps (e.g. LinkedIn). Served from a world-readable
+    # path under the git repo; the caddy user can traverse /opt/postiz.
+    @privacy path /privacy /privacy/
+    handle @privacy {
+        root * /opt/postiz/www
+        rewrite * /privacy.html
+        file_server
+    }
+
+    handle {
+        reverse_proxy localhost:4007
+    }
 }
