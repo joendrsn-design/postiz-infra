@@ -3,6 +3,11 @@ services:
     image: ghcr.io/gitroomhq/postiz-app:latest
     container_name: postiz
     restart: always
+    labels:
+      # Watched by the autoheal sidecar: if this container's healthcheck goes
+      # unhealthy (e.g. the backend loses its cold-start race and 3000 never
+      # opens), autoheal restarts it. Only labelled containers are touched.
+      - autoheal=true
     environment:
       # === Required Settings
       MAIN_URL: 'https://postiz.dailylatin.org'
@@ -299,6 +304,23 @@ services:
     depends_on:
       temporal:
         condition: service_healthy
+
+  # Watchdog: restarts any container labelled autoheal=true that Docker reports
+  # as unhealthy. Here it guards `postiz` against the backend cold-start hang
+  # (see the postiz healthcheck). It restarts the WHOLE container, which re-runs
+  # the cold start — usually recovers on the first try since the hang is
+  # intermittent. Needs the Docker socket (root-equivalent access on this host).
+  autoheal:
+    image: willfarrell/autoheal:1.2.0
+    container_name: autoheal
+    restart: always
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: autoheal   # only watch autoheal=true containers
+      AUTOHEAL_INTERVAL: '10'              # seconds between health polls
+      AUTOHEAL_START_PERIOD: '120'         # grace before watching a freshly started container
+      AUTOHEAL_DEFAULT_STOP_TIMEOUT: '30'  # SIGTERM grace before kill on restart
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:
   postgres-volume:
