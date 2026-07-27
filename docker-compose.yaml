@@ -37,8 +37,10 @@ services:
       # CLOUDFLARE_REGION: 'auto'
 
       # === Social Media API Settings
-      X_API_KEY: ''
-      X_API_SECRET: ''
+      # X uses OAuth 1.0a: these are the app's Consumer Keys
+      # (API Key / API Secret), NOT the Bearer or Access tokens.
+      X_API_KEY: '${X_API_KEY:-}'
+      X_API_SECRET: '${X_API_SECRET:-}'
       LINKEDIN_CLIENT_ID: '${LINKEDIN_CLIENT_ID:-}'
       LINKEDIN_CLIENT_SECRET: '${LINKEDIN_CLIENT_SECRET:-}'
       REDDIT_CLIENT_ID: ''
