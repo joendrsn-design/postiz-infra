@@ -20,6 +20,7 @@ history — see [Secrets](#secrets).
 | `dynamicconfig/development-sql.yaml` | Temporal dynamic config, bind-mounted into the `temporal` container. |
 | `backup.sh` | Nightly backup to Cloudflare R2. Run from cron. |
 | `Caddyfile` | Copy of `/etc/caddy/Caddyfile`. **Not** read from here — see [Caddy](#caddy). |
+| `www/` | Static pages served by Caddy: `privacy.html`, `terms.html`. See [Static pages](#static-pages). |
 
 `postiz-docker-compose/` on the server is an untracked clone of upstream
 `gitroomhq/postiz-docker-compose`, kept for reference only. Nothing in it runs.
@@ -61,7 +62,42 @@ sudo cp /opt/postiz/Caddyfile /etc/caddy/Caddyfile
 sudo systemctl reload caddy
 ```
 
+**Verify the reload actually took.** `systemctl reload caddy` has been observed
+exiting cleanly while leaving the old config running, so a correct file on disk
+does not prove a correct running config. Check what Caddy is really serving via
+the admin API on loopback:
+
+```bash
+curl -s http://127.0.0.1:2019/config/ | grep -o '"/terms"'
+```
+
+If the new route is missing, reload directly against the admin API — this needs
+no sudo, since it only reads the config file and POSTs to localhost:
+
+```bash
+/usr/bin/caddy reload --config /etc/caddy/Caddyfile --force
+```
+
 TLS certificates are issued and renewed automatically by Caddy.
+
+### Static pages
+
+Two static pages are served from `/opt/postiz/www`, each with a `handle` block
+placed **ahead of** the `reverse_proxy` so Postiz's catch-all 307 to `/auth`
+doesn't swallow them:
+
+| URL | File | Purpose |
+| --- | --- | --- |
+| `/privacy` | `www/privacy.html` | Privacy policy URL for social OAuth apps. |
+| `/terms` | `www/terms.html` | Terms of service URL for the same. |
+
+Both describe the **operator of the publishing tool**, not any client brand.
+That is deliberate: this instance publishes for multiple brands, and X in
+particular takes a single instance-wide `X_API_KEY`/`X_API_SECRET` pair with no
+per-integration override, so one OAuth app is shared across all of them. Naming
+a single brand in these pages — or hosting them on a client domain — would
+mislabel the app for every other brand. Keep the files world-readable; the
+`caddy` user reads them through `/opt/postiz`.
 
 ## Operating
 
