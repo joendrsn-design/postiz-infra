@@ -1,12 +1,21 @@
 postiz.dailylatin.org {
-    # Static privacy policy, served ahead of the app so it isn't swallowed
-    # by Postiz's catch-all redirect to /auth. Used as the OAuth privacy URL
-    # for connected social apps (e.g. LinkedIn). Served from a world-readable
-    # path under the git repo; the caddy user can traverse /opt/postiz.
+    # Static privacy policy and terms, served ahead of the app so they aren't
+    # swallowed by Postiz's catch-all redirect to /auth. Used as the OAuth
+    # privacy / terms URLs for connected social apps (e.g. LinkedIn, X). Served
+    # from a world-readable path under the git repo; the caddy user can
+    # traverse /opt/postiz. Both describe the operator of the publishing tool,
+    # not any individual client brand -- one OAuth app is shared across brands.
     @privacy path /privacy /privacy/
     handle @privacy {
         root * /opt/postiz/www
         rewrite * /privacy.html
+        file_server
+    }
+
+    @terms path /terms /terms/
+    handle @terms {
+        root * /opt/postiz/www
+        rewrite * /terms.html
         file_server
     }
 
