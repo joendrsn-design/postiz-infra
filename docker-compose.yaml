@@ -124,6 +124,21 @@ services:
     volumes:
       - postiz-config:/config/
       - postiz-uploads:/uploads/
+      # --- LinkedIn Page provider patch — INACTIVE until CMA is approved ---
+      # LinkedIn forbids any other product on an app that has Community
+      # Management API, so app 864258cel0yzlo can never hold `openid`/`profile`.
+      # Stock Postiz requests all 7 scopes in one authorization request and
+      # LinkedIn rejects the whole request if any one is unauthorized, so the
+      # stock provider cannot connect a Page on a CMA-only app. patches/
+      # linkedin.page.provider.js drops those 2 scopes, swaps /v2/userinfo +
+      # /v2/me for a single /rest/me (id + vanityName under r_basicprofile,
+      # which CMA does grant), and removes prompt=none. See patches/README.md.
+      #
+      # Uncomment BOTH lines and `docker compose up -d postiz` on the day CMA
+      # is approved. Both paths are byte-identical in the image, so one file
+      # serves both. Re-comment to fall back to stock.
+      # - ./patches/linkedin.page.provider.js:/app/apps/backend/dist/libraries/nestjs-libraries/src/integrations/social/linkedin.page.provider.js:ro
+      # - ./patches/linkedin.page.provider.js:/app/apps/orchestrator/dist/libraries/nestjs-libraries/src/integrations/social/linkedin.page.provider.js:ro
     ports:
       - "127.0.0.1:4007:5000"
     networks:

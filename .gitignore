@@ -2,8 +2,12 @@
 # not part of this deployment's config. See README.
 postiz-docker-compose/
 
-# Secrets, once extracted out of docker-compose.yaml
+# Secrets, once extracted out of docker-compose.yaml.
+# .env.* catches timestamped backups (.env.bak-*) and any future .env.local;
+# .env.example is the committed template and must stay tracked.
 .env
+.env.*
+!.env.example
 
 # Backup temp artifacts
 *.sql.gz
